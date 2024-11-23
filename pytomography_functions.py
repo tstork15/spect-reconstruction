@@ -4,7 +4,7 @@ from pytomography.projectors.SPECT import SPECTSystemMatrix
 from pytomography.likelihoods import PoissonLogLikelihood
 
 
-def reconstruction(file_path, main_index, lower_scatter_index=-1, upper_scatter_index=-1):
+def reconstruction(file_path, main_index, lower_scatter_index=-1, upper_scatter_index=-1, iterations=2, subsets=8):
     object_meta, proj_meta = dicom.get_metadata(file_path, index_peak=main_index)
 
     photopeak = dicom.get_projections(file_path, index_peak=main_index)
@@ -34,6 +34,6 @@ def reconstruction(file_path, main_index, lower_scatter_index=-1, upper_scatter_
 
     reconstruction_algorithm = OSEM(likelihood)
 
-    reconstructed_object = reconstruction_algorithm(n_iters=1, n_subsets=8)
+    reconstructed_object = reconstruction_algorithm(n_iters=iterations, n_subsets=subsets)
 
     return reconstructed_object

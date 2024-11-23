@@ -4,6 +4,7 @@ from tkinter import ttk
 import pydicom
 from pytomography_functions import reconstruction
 from pytomography.io.SPECT import dicom
+import os
 
 # Initialize global variable
 file_path = None
@@ -120,38 +121,64 @@ def reconstruct():
         # Inform the user that they need to assign a main window
         tk.messagebox.showwarning("No Main Window", "Please right-click to assign a 'Main Window' before reconstructing.")
     else:
-        if len(scatter_windows) == 2:
-            if ds.EnergyWindowInformationSequence[int(scatter_windows[0])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit < ds.EnergyWindowInformationSequence[int(scatter_windows[1])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit:
-                lower_scatter = scatter_windows[0]
-                upper_scatter = scatter_windows[1]
-            else:
-                lower_scatter = scatter_windows[1]
-                upper_scatter = scatter_windows[0]
+        # Get the values for iterations and subsets
+        iterations = int(iterations_input.get())
+        subsets = int(subsets_input.get())
 
-            reconstruction(file_path, int(main_window), lower_scatter_index=int(lower_scatter), upper_scatter_index=int(upper_scatter))
-        elif len(scatter_windows) == 1:
-            if ds.EnergyWindowInformationSequence[int(scatter_windows[0])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit < ds.EnergyWindowInformationSequence[int(main_window)].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit:
-                lower_scatter = scatter_windows[0]
-                reconstructed_object = reconstruction(file_path, int(main_window), lower_scatter_index=int(lower_scatter))
+        # Ensure the parameters are 1 or greater
+        if iterations > 0 and subsets > 0:
+            # Check if two scatter windows were defined
+            if len(scatter_windows) == 2:
+                # Determine which energy window is the upper scatter and lower scatter
+                if ds.EnergyWindowInformationSequence[int(scatter_windows[0])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit < ds.EnergyWindowInformationSequence[int(scatter_windows[1])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit:
+                    lower_scatter = scatter_windows[0]
+                    upper_scatter = scatter_windows[1]
+                else:
+                    lower_scatter = scatter_windows[1]
+                    upper_scatter = scatter_windows[0]
+
+                # Reconstruct with both scatter windows
+                reconstructed_object = reconstruction(file_path, int(main_window), lower_scatter_index=int(lower_scatter),
+                                                      upper_scatter_index=int(upper_scatter), iterations=iterations, subsets=subsets)
+            elif len(scatter_windows) == 1:
+                # Determine if the scatter window is an upper or lower
+                if ds.EnergyWindowInformationSequence[int(scatter_windows[0])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit < ds.EnergyWindowInformationSequence[int(main_window)].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit:
+                    lower_scatter = scatter_windows[0]
+
+                    # Reconstruct with only a lower scatter window
+                    reconstructed_object = reconstruction(file_path, int(main_window), lower_scatter_index=int(lower_scatter),
+                                                          iterations=iterations, subsets=subsets)
+                else:
+                    upper_scatter = scatter_windows[0]
+
+                    # Reconstruct with only an upper scatter window
+                    reconstructed_object = reconstruction(file_path, int(main_window), upper_scatter_index=int(upper_scatter),
+                                                          iterations=iterations, subsets=subsets)
             else:
-                upper_scatter = scatter_windows[0]
-                reconstructed_object = reconstruction(file_path, int(main_window), upper_scatter_index=int(upper_scatter))
+                # Reconstruct without any scatter windows
+                reconstructed_object = reconstruction(file_path, int(main_window), iterations=iterations, subsets=subsets)
         else:
-            reconstructed_object = reconstruction(file_path, int(main_window))
+            # Inform the user that they need to enter positive numbers
+            tk.messagebox.showwarning("Error",
+                                      "Please enter positive numbers for the iterations and subsets.")
 
 def save():
-    if 'reconstructed_object' in globals():
+    # Ensure a reconstruction has been created
+    if reconstructed_object is not None:
+        # Build the folder to save the reconstruction to
+        save_path = filedialog.askdirectory()
+        save_folder = save_name_entry.get()
+        save_path = os.path.join(save_path, save_folder)
         try:
-            save_path = filedialog.askdirectory()
-            # Save
+            # Try saving
             dicom.save_dcm(
                 save_path=save_path,
                 object=reconstructed_object,
                 file_NM=file_path,
-                recon_name='OSEM_4it_8ss')
+                recon_name=save_folder)
         except:
             tk.messagebox.showwarning("Error", "Please create a new folder.")
-            #TODO: hook up iterations/subsets, make saving work, remove hardcoded save name
+            #TODO: hook up iterations/subsets
     else:
         tk.messagebox.showwarning("Error", "Please create a reconstruction.")
 
@@ -172,32 +199,46 @@ if __name__ == "__main__":
     tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
     tree.pack(fill=tk.BOTH, expand=True)
 
-    # Bottom frame for iterations, subsets, and reconstruct button
+    # param frame for iterations, subsets, and reconstruct button
     bottom_frame = tk.Frame(root)
     bottom_frame.pack(padx=10, pady=10, fill=tk.X)
 
+    # Subframe for iterations, subsets, and reconstruct button
+    param_frame = tk.Frame(bottom_frame)
+    param_frame.pack(fill=tk.X)
+
     # Label and input for iterations
-    iterations_label = tk.Label(bottom_frame, text="Iterations:")
+    iterations_label = tk.Label(param_frame, text="Iterations:")
     iterations_label.pack(side=tk.LEFT, padx=5, pady=5)
-    iterations_input = tk.Spinbox(bottom_frame, from_=1, to=100, width=5)
+    iterations_input = tk.Spinbox(param_frame, from_=1, to=100, width=5)
     iterations_input.delete(0, tk.END)
     iterations_input.insert(0, "4")
     iterations_input.pack(side=tk.LEFT, padx=5, pady=5)
 
     # Label and input for subsets
-    subsets_label = tk.Label(bottom_frame, text="Subsets:")
+    subsets_label = tk.Label(param_frame, text="Subsets:")
     subsets_label.pack(side=tk.LEFT, padx=5, pady=5)
-    subsets_input = tk.Spinbox(bottom_frame, from_=1, to=100, width=5)
+    subsets_input = tk.Spinbox(param_frame, from_=1, to=100, width=5)
     subsets_input.delete(0, tk.END)
     subsets_input.insert(0, "8")
     subsets_input.pack(side=tk.LEFT, padx=5, pady=5)
 
-    # Reconstruct button in the bottom frame
-    reconstruct_button = tk.Button(bottom_frame, text="Reconstruct", command=reconstruct)
+    # Reconstruct button in the param frame
+    reconstruct_button = tk.Button(param_frame, text="Reconstruct", command=reconstruct)
     reconstruct_button.pack(side=tk.LEFT, padx=5, pady=5)
 
-    # Save button in the bottom frame
-    save_button = tk.Button(bottom_frame, text="Save Reconstruction", command=save)
+    # Subframe for save button and text input
+    save_frame = tk.Frame(bottom_frame)
+    save_frame.pack(fill=tk.X, pady=(10, 0))
+
+    # Text input for folder name
+    save_name_label = tk.Label(save_frame, text="Folder Name:")
+    save_name_label.pack(side=tk.LEFT, padx=5)
+    save_name_entry = tk.Entry(save_frame, width=20)
+    save_name_entry.pack(side=tk.LEFT, padx=5)
+
+    # Save button in the save frame
+    save_button = tk.Button(save_frame, text="Save Reconstruction", command=save)
     save_button.pack(side=tk.LEFT, padx=5, pady=5)
 
     root.geometry("800x600")
