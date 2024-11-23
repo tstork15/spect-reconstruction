@@ -2,7 +2,13 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter import ttk
 import pydicom
-import numpy as np
+from pytomography_functions import reconstruction
+from pytomography.io.SPECT import dicom
+
+# Initialize global variable
+file_path = None
+ds = None
+reconstructed_object = None
 
 def select_file_and_display_data():
     """
@@ -12,6 +18,7 @@ def select_file_and_display_data():
     Outputs: None
     """
     # Open a file dialog to select a DICOM file and get its path
+    global file_path, ds
     file_path = filedialog.askopenfilename(title="Select DICOM file", filetypes=[("DICOM files", "*.dcm")])
 
     # Read the modality from the selected DICOM file
@@ -31,7 +38,7 @@ def select_file_and_display_data():
             middleLimit = (lowerLimit + upperLimit) / 2
 
             tree.insert("", "end", values=(windowName, lowerLimit, upperLimit, middleLimit),
-                        tags=("evenrow" if i % 2 == 0 else "oddrow"))
+                        tags=("evenrow" if i % 2 == 0 else "oddrow"), iid=i)
 
     else:
         # The selected DICOM isn't a tomographic SPECT image
@@ -108,33 +115,92 @@ def reconstruct():
     If no main window is assigned, inform the user.
     If the main window is assigned, reconstruct.
     """
+    global reconstructed_object
     if main_window is None:
         # Inform the user that they need to assign a main window
         tk.messagebox.showwarning("No Main Window", "Please right-click to assign a 'Main Window' before reconstructing.")
     else:
-        # Placeholder for reconstruction logic
-        print("Reconstructing with the selected main window...")
+        if len(scatter_windows) == 2:
+            if ds.EnergyWindowInformationSequence[int(scatter_windows[0])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit < ds.EnergyWindowInformationSequence[int(scatter_windows[1])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit:
+                lower_scatter = scatter_windows[0]
+                upper_scatter = scatter_windows[1]
+            else:
+                lower_scatter = scatter_windows[1]
+                upper_scatter = scatter_windows[0]
 
+            reconstruction(file_path, int(main_window), lower_scatter_index=int(lower_scatter), upper_scatter_index=int(upper_scatter))
+        elif len(scatter_windows) == 1:
+            if ds.EnergyWindowInformationSequence[int(scatter_windows[0])].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit < ds.EnergyWindowInformationSequence[int(main_window)].EnergyWindowRangeSequence[0].EnergyWindowLowerLimit:
+                lower_scatter = scatter_windows[0]
+                reconstructed_object = reconstruction(file_path, int(main_window), lower_scatter_index=int(lower_scatter))
+            else:
+                upper_scatter = scatter_windows[0]
+                reconstructed_object = reconstruction(file_path, int(main_window), upper_scatter_index=int(upper_scatter))
+        else:
+            reconstructed_object = reconstruction(file_path, int(main_window))
+
+def save():
+    if 'reconstructed_object' in globals():
+        try:
+            save_path = filedialog.askdirectory()
+            # Save
+            dicom.save_dcm(
+                save_path=save_path,
+                object=reconstructed_object,
+                file_NM=file_path,
+                recon_name='OSEM_4it_8ss')
+        except:
+            tk.messagebox.showwarning("Error", "Please create a new folder.")
+            #TODO: hook up iterations/subsets, make saving work, remove hardcoded save name
+    else:
+        tk.messagebox.showwarning("Error", "Please create a reconstruction.")
 
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("SPECT Reconstruction")
+
     frame = tk.Frame(root)
     frame.pack(padx=10, pady=10)
 
     select_file_button = tk.Button(frame, text="Select DICOM File", command=select_file_and_display_data)
     select_file_button.pack(side=tk.LEFT, padx=5, pady=5)
 
-    reconstruct_button = tk.Button(frame, text="Reconstruct", command=reconstruct)
-    reconstruct_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-    root.geometry("800x600")
-
     tree_frame = tk.Frame(root)
-    tree_frame.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+    tree_frame.pack(fill=tk.X, padx=10, pady=10)
 
     columns = ("Energy Window Name", "Lower Limit (keV)", "Upper Limit (keV)", "Center (keV)", "Label")
     tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
+    tree.pack(fill=tk.BOTH, expand=True)
+
+    # Bottom frame for iterations, subsets, and reconstruct button
+    bottom_frame = tk.Frame(root)
+    bottom_frame.pack(padx=10, pady=10, fill=tk.X)
+
+    # Label and input for iterations
+    iterations_label = tk.Label(bottom_frame, text="Iterations:")
+    iterations_label.pack(side=tk.LEFT, padx=5, pady=5)
+    iterations_input = tk.Spinbox(bottom_frame, from_=1, to=100, width=5)
+    iterations_input.delete(0, tk.END)
+    iterations_input.insert(0, "4")
+    iterations_input.pack(side=tk.LEFT, padx=5, pady=5)
+
+    # Label and input for subsets
+    subsets_label = tk.Label(bottom_frame, text="Subsets:")
+    subsets_label.pack(side=tk.LEFT, padx=5, pady=5)
+    subsets_input = tk.Spinbox(bottom_frame, from_=1, to=100, width=5)
+    subsets_input.delete(0, tk.END)
+    subsets_input.insert(0, "8")
+    subsets_input.pack(side=tk.LEFT, padx=5, pady=5)
+
+    # Reconstruct button in the bottom frame
+    reconstruct_button = tk.Button(bottom_frame, text="Reconstruct", command=reconstruct)
+    reconstruct_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+    # Save button in the bottom frame
+    save_button = tk.Button(bottom_frame, text="Save Reconstruction", command=save)
+    save_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+    root.geometry("800x600")
 
     for col in columns:
         tree.heading(col, text=col)
@@ -143,7 +209,6 @@ if __name__ == "__main__":
 
     tree_frame.grid_rowconfigure(0, weight=1)
     tree_frame.grid_columnconfigure(0, weight=1)
-
 
     # Adjust column widths to fit within the available space
     def adjust_columns(event=None):
@@ -163,6 +228,7 @@ if __name__ == "__main__":
     context_menu = create_context_menu()
     tree.bind("<Button-3>", on_right_click)  # Bind right-click to the treeview
 
+    tree.tag_configure("evenrow", background="lightgrey")  # Configure the background color for even rows
+    tree.tag_configure("oddrow", background="white")  # Configure the background color for odd rows
+
     root.mainloop()
-
-
